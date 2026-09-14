@@ -8,7 +8,7 @@ import { useEffect, useRef } from 'react';
 import { GameScene } from './pixi/createGameScene';
 import { snapshotToBoardNodes } from './pixi/nodes';
 import { useAssetManager } from './assetRuntimeContext';
-import { useGameSessionStore } from '../state/gameSessionStore';
+import { useGameSessionStore, type GameSessionState } from '../state/gameSessionStore';
 import type { IncidentSummary, SimulationSnapshot } from '../api/schemas';
 
 /** Sync the scene from a snapshot, isolating any Pixi render error so it can
@@ -30,6 +30,40 @@ function syncScene(
   }
 }
 
+/** Mutable watermark for the event-derived effect bridge (per active session). */
+interface EffectBridgeState {
+  sessionId: string | null;
+  /** Highest event cursor already forwarded to the effect controller. */
+  cursor: number;
+}
+
+/**
+ * Bridge the deduped store event stream + authoritative simulation tick into the
+ * scene's event-derived effect runtime (§12, §21). Historical backlog is skipped
+ * by seeding the watermark to the current cursor; only strictly-newer events spawn.
+ * Isolated so a controller error can never break the zustand notification chain.
+ */
+function driveEffects(scene: GameScene, state: GameSessionState, bridge: EffectBridgeState): void {
+  try {
+    if (state.sessionId !== bridge.sessionId) {
+      bridge.sessionId = state.sessionId;
+      bridge.cursor = state.lastProcessedCursor; // new session → skip prior events
+      scene.resetEffects();
+    }
+    // Advance simulation-time lifetime (expiry) BEFORE spawning new occurrences.
+    scene.advanceEffects(state.currentTick);
+    for (const ev of state.events) {
+      if (ev.cursor > bridge.cursor) {
+        scene.handleDomainEvent(ev);
+        bridge.cursor = ev.cursor;
+      }
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    if (import.meta.env.DEV) console.error('[GameCanvas] effect bridge failed:', err);
+  }
+}
+
 export function GameCanvas(): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<GameScene | null>(null);
@@ -47,15 +81,29 @@ export function GameCanvas(): JSX.Element {
       ? { onSelect: (id: string | null) => select(id), assets }
       : { onSelect: (id: string | null) => select(id) };
 
+    // Per-mount effect bridge watermark (one subscription per active session, §21).
+    const bridge: EffectBridgeState = { sessionId: null, cursor: -1 };
+
     void GameScene.create(host, createOptions).then((scene) => {
       if (cancelled) {
         scene.destroy();
         return;
       }
       sceneRef.current = scene;
-      // Prime with current store state.
-      const { snapshot, selectedNodeId, summary } = useGameSessionStore.getState();
-      syncScene(scene, snapshot, selectedNodeId, summary?.active_incidents ?? []);
+      // Prime with current store state. Isolated like syncScene/driveEffects so a
+      // scene error during bootstrap is logged, never an unhandled rejection (§24).
+      try {
+        const state = useGameSessionStore.getState();
+        syncScene(scene, state.snapshot, state.selectedNodeId, state.summary?.active_incidents ?? []);
+        // Seed the effect bridge to the current session/cursor so the bootstrap
+        // backlog of historical events is not replayed as live effects (§15).
+        bridge.sessionId = state.sessionId;
+        bridge.cursor = state.lastProcessedCursor;
+        scene.advanceEffects(state.currentTick);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        if (import.meta.env.DEV) console.error('[GameCanvas] scene priming failed:', err);
+      }
     });
 
     // Keep the scene in sync with store changes.
@@ -63,6 +111,7 @@ export function GameCanvas(): JSX.Element {
       const scene = sceneRef.current;
       if (scene === null) return;
       syncScene(scene, state.snapshot, state.selectedNodeId, state.summary?.active_incidents ?? []);
+      driveEffects(scene, state, bridge);
     });
 
     return () => {
