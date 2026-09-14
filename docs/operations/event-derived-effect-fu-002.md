@@ -1,7 +1,10 @@
 # POLICY-C-FU-002 — EVENT_DERIVED Effect Lifecycle (Frontend Runtime)
 
-Status: **EVENT_DERIVED = IMPLEMENTED_PENDING_DEVCTO_APPROVAL** ·
-`POLICY-C-FU-002 = READY_FOR_DEVCTO_REVIEW`.
+Status: **EVENT_DERIVED = COMPLETE_IN_DEV** · `POLICY-C-FU-002 = COMPLETE_IN_DEV` ·
+`FU_002_CANONICAL_DOCUMENTATION = SYNCHRONIZED_IN_DEV`. DevCTO-approved and
+promoted to `dev` on 2026-09-14 (see **Promotion & DevCTO approval** below).
+Prerequisites `REQUEST_ROUTED_EDGE_EVENT` and `EVENT_DERIVED_MAPPING_PRECONDITION`
+are `COMPLETE_IN_DEV`; `FIRST_PRODUCTION_EFFECT_CANDIDATE_005 = APPROVED_IN_DEV`.
 
 This is the first `event → effect` runtime. It consumes the canonical
 `REQUEST_ROUTED` DomainEvent and renders the approved production effect resource
@@ -127,9 +130,105 @@ category inference, no unknown-event fallback. Any non-allowlisted event → no 
 
 ## Scope boundary
 
-- `EVENT_DERIVED` is **IMPLEMENTED_PENDING_DEVCTO_APPROVAL** — not `COMPLETE_IN_DEV`.
-- Performance/concurrency: the 1/16-instance runs are `RUNTIME_SANITY_EVIDENCE` only;
-  no sprite/particle/effect capacity is confirmed.
-- Candidate **#006 (Incident Effect) = WAIT** until FU-002 is `COMPLETE_IN_DEV`. No
-  #006 asset, no new asset, no atlas, no particle engine, no wall-clock TTL, no
-  topology inference, no event-name→asset convention.
+- `EVENT_DERIVED` is **COMPLETE_IN_DEV** (DevCTO-approved and promoted; see below).
+- **Effect Resource Approval = COMPLETE_IN_DEV**; **Event-Derived Runtime = COMPLETE_IN_DEV**.
+- Performance/concurrency: the 1/16-instance runs are `RUNTIME_SANITY_EVIDENCE` only.
+  This document does **not** confirm effect performance capacity, particle capacity, or
+  sprite concurrency capacity — none are claimed.
+- Candidate **#006 (Incident Effect)** is now **UNBLOCKED** (`READY_FOR_PRODUCTION_EFFECT_CANDIDATE_006`)
+  because FU-002 is `COMPLETE_IN_DEV`. It is **not** started in this task. No #006 asset, no
+  new asset, no atlas, no particle engine, no wall-clock TTL, no topology inference, no
+  event-name→asset convention.
+
+## Promotion & DevCTO approval
+
+DevCTO-approved and promoted to `dev` on 2026-09-14. This section is the canonical
+approval record; the runtime/tests/assets are unchanged by this documentation sync.
+
+**Promotion commits**
+
+| Step | PR | Flow | Merge commit |
+| --- | --- | --- | --- |
+| Implementation | **#58** | `agent/frontend → review/devcto` | `52e8372` |
+| Promotion | **#59** | `review/devcto → dev` | `4d6bb18` |
+
+- Reviewed implementation HEAD: `4052105` (feature `2e29ab0` + DevCTO bootstrap-priming
+  isolation refinement `4052105`). Base dev: `fe64211`.
+- Final promoted dev: **`origin/dev @ 4d6bb18`**. `main`: untouched; no release.
+
+**Live end-to-end evidence (real stack, not injection)**
+
+Final approval included a real live-stack path — the event originated from the actual
+simulation, not the browser harness:
+
+`simulation/engine.py::_route → REQUEST_ROUTED → EventEnvelope → WebSocket →
+gameSessionStore → GameCanvas → EventDerivedEffectController → AssetManager →
+Pixi Sprite → WebGL2`.
+
+- Observed live event: `tick = 1`, `source = lb-live`, `target = app-live`, `count = 3`.
+- Network Flow Effect: **VISIBLE**; directional `LB → APP` placement: **PASS**;
+  framebuffer/pixel evidence: **+30 cyan pixels** in the target edge region.
+- Hardware: Apple M4 Max, `ANGLE (Apple, ANGLE Metal Renderer)`, SwiftShader = FALSE;
+  0 console/page/WebGL errors.
+
+**Live simulation-time expiry evidence**
+
+- `durationTicks = 6`; clock = simulation tick. Effect visible before expiry.
+- After disconnect (no new spawn) and advancing beyond `event.tick + 6`: **0 changed
+  pixels vs baseline** (beam gone). Verdict: `LIVE_SIMULATION_TIME_EXPIRY = PASS`.
+
+**Approved runtime contract**
+
+- Mapping: `REQUEST_ROUTED → effect.network-flow.primary` (exact-match allowlist).
+- Occurrence identity: `type + tick + source_node_id + target_node_id` (no UUID).
+- Dedup: same occurrence ⇒ one Effect. Different tick / edge ⇒ independent occurrence.
+- `count`: `V1_NOT_USED_FOR_VISUAL_INTENSITY`. TTL: `durationTicks = 6`.
+- Authoritative clock: `gameSessionStore.currentTick` (no wall-clock; frame rate is NOT
+  authoritative).
+
+**Approved ownership contract**
+
+- Sprite: per Effect occurrence. AssetManager handle: per Effect consumer.
+  `TextureSource`: shared; texture lifecycle owner: AssetManager.
+- Sprite cleanup does **not** destroy the Texture / TextureSource.
+- Pending async work is generation-guarded; reset/dispose invalidates the old
+  generation, releases handles, removes sprites, and unsubscribes.
+
+**Pause / speed (verified)**
+
+- Pause: simulation tick stops ⇒ Effect TTL stops.
+- 1x / 2x / 4x: identical simulation-tick lifetime; wall-clock lifetime may differ.
+
+**Regression recorded at promotion**
+
+- Frontend: lint / typecheck / build clean; vitest **258/258**; event-derived browser
+  harness (Metal) PASS; visual-c **5/5** (live stack).
+- Backend: ruff clean; **pytest 193 passed**. **15 integration cases did not execute** —
+  they are environment/infrastructure-gated by PostgreSQL/Redis availability (fixture
+  setup errors), **not** FU-002 regressions and **not** counted as passing.
+- `REQUEST_ROUTED` / route tests: **20 pass** (promotion re-run, `-k "request_routed or route"`).
+- Asset gate: `verify-generated` drift=0 / gate=pass; `asset-production-gate` **26/26**,
+  `build_id 0633e0f8…`, included = **5**.
+
+**Approval boundary**
+
+- `Effect Resource Approval = COMPLETE_IN_DEV`; `Event-Derived Runtime = COMPLETE_IN_DEV`.
+- No effect performance / particle / sprite-concurrency capacity is confirmed; the
+  16-instance run is `RUNTIME_SANITY_EVIDENCE` only.
+
+**Live-run environment note**
+
+- During live validation a Docker proxy occupied IPv6 `localhost:8000`; the run therefore
+  used an explicit IPv4 backend port plus a temporary Vite proxy. Classification:
+  `TEST_ENVIRONMENT_CONFIGURATION`, **NOT_PRODUCT_BUG**. No runtime fix is warranted.
+
+**Live-E2E harness**
+
+- `LIVE_E2E_HARNESS = THROWAWAY / NOT_COMMITTED`; the live-stack E2E is **not** a permanent
+  CI test. `LIVE_E2E_EVIDENCE = CAPTURED_IN_FU_002_APPROVAL_RECORD` (this section).
+
+**Non-blocking follow-up**
+
+- `EVENT_DERIVED_LIVE_E2E_AUTOMATION = PROPOSED` — eventually convert the manually
+  executed `_route → WebSocket → Effect → expiry` validation into a durable automated
+  regression. This follow-up **must not** block Candidate #006.
