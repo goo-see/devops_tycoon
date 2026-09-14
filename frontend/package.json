@@ -16,7 +16,8 @@
     "generate:api": "openapi-typescript ../contracts/openapi/backend-v1.json -o src/api/generated/backend.d.ts",
     "check:api-drift": "openapi-typescript ../contracts/openapi/backend-v1.json -o /tmp/backend.gen.d.ts && diff -q src/api/generated/backend.d.ts /tmp/backend.gen.d.ts",
     "test:browser:production-image": "playwright test -c playwright.production-image.config.ts",
-    "test:browser:effect-preview": "playwright test -c playwright.effect-preview.config.ts"
+    "test:browser:effect-preview": "playwright test -c playwright.effect-preview.config.ts",
+    "test:browser:event-derived": "playwright test -c playwright.event-derived.config.ts"
   },
   "dependencies": {
     "pixi.js": "^8.6.6",

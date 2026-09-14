@@ -131,6 +131,21 @@ export const PRODUCTION_APP_SERVER_SOURCE = PRODUCTION_IMAGE_ASSETS[NODE_BUILDIN
 export const PRODUCTION_APP_SERVER_CHECKSUM = PRODUCTION_IMAGE_ASSETS[NODE_BUILDING_ASSET_ID.app_server]!.checksum;
 
 /**
+ * Approved production EFFECT assets (category `effect`), keyed by canonical asset id.
+ * These are not per-NodeKind — they are acquired on demand by the event-derived
+ * effect runtime (POLICY-C-FU-002), not by building sync. The served PNG + checksum
+ * are the candidate #005 canonical resource; the asset itself is UNCHANGED here (this
+ * only registers it into the runtime manifest so `AssetManager.acquire` resolves it).
+ *   #005 Network Flow Effect
+ */
+export const PRODUCTION_EFFECT_ASSETS: Record<string, { source: string; checksum: string }> = {
+  'effect.network-flow.primary': {
+    source: '/assets/effect/network-flow.png',
+    checksum: 'd4c2dd4e7873479cc6ceff00394c28c7149561d468bb0f56d65b257b122b56e9',
+  },
+};
+
+/**
  * Runtime PRODUCTION manifest. Identical to the development manifest except each kind
  * with an approved production IMAGE asset (see `PRODUCTION_IMAGE_ASSETS`) is served as a
  * real `image` entry (checksum-verified by ProductionImageAssetLoader). Kinds without a
@@ -154,9 +169,21 @@ export function buildProductionManifest(version = 'prod-1'): AssetManifest {
         }
       : e;
   });
+  // Approved production effect assets (not NodeKind-bound; acquired by the
+  // event-derived effect runtime). Appended as canonical `effect`/`image` entries.
+  const effectEntries: AssetManifestEntry[] = Object.entries(PRODUCTION_EFFECT_ASSETS).map(
+    ([assetId, prod]): AssetManifestEntry => ({
+      assetId,
+      category: 'effect',
+      sourceType: 'image',
+      source: prod.source,
+      checksum: prod.checksum,
+      assetVersion: '1',
+    }),
+  );
   return {
     manifestVersion: version,
-    assets,
+    assets: [...assets, ...effectEntries],
     ...(dev.categoryFallbacks ? { categoryFallbacks: dev.categoryFallbacks } : {}),
   };
 }

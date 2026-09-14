@@ -15,8 +15,8 @@
  * The 128×64 coordinate system (`gridToScreen`/`layoutGrid`) is unchanged.
  */
 
-import { Application, Container } from 'pixi.js';
-import type { FederatedPointerEvent } from 'pixi.js';
+import { Application, Container, Sprite } from 'pixi.js';
+import type { FederatedPointerEvent, Texture } from 'pixi.js';
 import { layoutGrid } from './isometric';
 import { gridToScreen } from './isometric/coordinates';
 import type { BoardNode } from './nodes';
@@ -30,7 +30,12 @@ import { SelectionView } from './selection/SelectionView';
 import { AssetManager } from './assets/AssetManager';
 import { developmentAssetIdForKind } from './assets/generatedBuildingAsset';
 import { incidentsForTarget, type IncidentViewModel } from '../incidentModel';
-import type { IncidentSummary } from '../../api/schemas';
+import type { IncidentSummary, EventEnvelope } from '../../api/schemas';
+import {
+  EventDerivedEffectController,
+  type EffectSprite,
+  type EffectLayer,
+} from '../effects/EventDerivedEffectController';
 
 export interface GameSceneOptions {
   background?: number;
@@ -60,6 +65,7 @@ export class GameScene {
   private readonly ownsAssets: boolean;
   private readonly connections: ConnectionView;
   private readonly selectionView: SelectionView;
+  private readonly effects: EventDerivedEffectController;
   private readonly buildings = new Map<string, BuildingView>();
   private readonly models = new Map<string, BuildingRenderModel>();
   private readonly viewAssetId = new Map<string, string>();
@@ -101,6 +107,26 @@ export class GameScene {
     }
     this.connections = new ConnectionView(this.layers.get('connections'));
     this.selectionView = new SelectionView(this.layers.get('selection'));
+
+    // Event-derived effect runtime (POLICY-C-FU-002). Lives on the reserved
+    // 'effects' layer (same world coord space as buildings), acquires production
+    // textures via the scene's AssetManager, and is driven by SIMULATION ticks.
+    const effectsLayer = this.layers.get('effects');
+    const layer: EffectLayer = {
+      addChild: (child) => {
+        effectsLayer.addChild(child as unknown as Container);
+      },
+      removeChild: (child) => {
+        effectsLayer.removeChild(child as unknown as Container);
+      },
+    };
+    this.effects = new EventDerivedEffectController({
+      assetManager: this.assets,
+      layer,
+      positionOf: (id) => this.positionOf(id),
+      // Pixi Sprite structurally satisfies the minimal EffectSprite contract.
+      createSprite: (texture): EffectSprite => new Sprite((texture as Texture | null) ?? undefined),
+    });
 
     // Background panning: drag empty space to move the camera.
     this.app.stage.eventMode = 'static';
@@ -195,10 +221,35 @@ export class GameScene {
     this.recenter();
   }
 
+  /**
+   * Event-derived effects (POLICY-C-FU-002). GameCanvas bridges the deduped store
+   * event stream + the authoritative simulation tick to these three methods:
+   *   - advanceEffects(tick): drive simulation-time lifetime (expiry) — call FIRST;
+   *   - handleDomainEvent(env): spawn an effect for a mapped occurrence;
+   *   - resetEffects(): clear all effects on session change.
+   */
+  advanceEffects(tick: number): void {
+    if (this.destroyed) return;
+    this.effects.advanceTo(tick);
+  }
+
+  handleDomainEvent(env: EventEnvelope): void {
+    if (this.destroyed) return;
+    this.effects.handleEvent(env);
+  }
+
+  resetEffects(): void {
+    if (this.destroyed) return;
+    this.effects.reset();
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     window.removeEventListener('resize', this.handleResize);
+    // Release effect sprites/handles before the app tears down (never destroys the
+    // shared texture — that is the AssetManager's to own).
+    this.effects.dispose();
     for (const v of this.buildings.values()) v.destroy();
     this.buildings.clear();
     this.models.clear();
