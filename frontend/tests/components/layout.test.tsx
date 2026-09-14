@@ -3,8 +3,20 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 // GameLayout mounts GameCanvas → mock the Pixi scene so no WebGL is needed.
+// Must implement the full GameScene surface GameCanvas drives (sync/selection/
+// incidents + the event-derived effect bridge) or priming throws.
 vi.mock('../../src/game/pixi/createGameScene', () => ({
-  GameScene: { create: vi.fn().mockResolvedValue({ sync: vi.fn(), setSelection: vi.fn(), destroy: vi.fn() }) },
+  GameScene: {
+    create: vi.fn().mockResolvedValue({
+      sync: vi.fn(),
+      setSelection: vi.fn(),
+      setIncidents: vi.fn(),
+      advanceEffects: vi.fn(),
+      handleDomainEvent: vi.fn(),
+      resetEffects: vi.fn(),
+      destroy: vi.fn(),
+    }),
+  },
 }));
 
 import { GameLayout } from '../../src/components/layout/GameLayout';

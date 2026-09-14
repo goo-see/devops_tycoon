@@ -26,7 +26,6 @@ function result(name: string, checks: Check[]): ScenarioResult {
   return { name, ok: checks.every((c) => c.ok), checks };
 }
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 /** Wait until a predicate holds (async texture load completing) or timeout. */
 async function waitFor(pred: () => boolean, timeoutMs = 8000): Promise<void> {

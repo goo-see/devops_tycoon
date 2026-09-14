@@ -90,14 +90,20 @@ export function GameCanvas(): JSX.Element {
         return;
       }
       sceneRef.current = scene;
-      // Prime with current store state.
-      const state = useGameSessionStore.getState();
-      syncScene(scene, state.snapshot, state.selectedNodeId, state.summary?.active_incidents ?? []);
-      // Seed the effect bridge to the current session/cursor so the bootstrap
-      // backlog of historical events is not replayed as live effects (§15).
-      bridge.sessionId = state.sessionId;
-      bridge.cursor = state.lastProcessedCursor;
-      scene.advanceEffects(state.currentTick);
+      // Prime with current store state. Isolated like syncScene/driveEffects so a
+      // scene error during bootstrap is logged, never an unhandled rejection (§24).
+      try {
+        const state = useGameSessionStore.getState();
+        syncScene(scene, state.snapshot, state.selectedNodeId, state.summary?.active_incidents ?? []);
+        // Seed the effect bridge to the current session/cursor so the bootstrap
+        // backlog of historical events is not replayed as live effects (§15).
+        bridge.sessionId = state.sessionId;
+        bridge.cursor = state.lastProcessedCursor;
+        scene.advanceEffects(state.currentTick);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        if (import.meta.env.DEV) console.error('[GameCanvas] scene priming failed:', err);
+      }
     });
 
     // Keep the scene in sync with store changes.
