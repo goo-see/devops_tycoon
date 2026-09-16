@@ -20,7 +20,12 @@
  */
 
 import type { EventEnvelope } from '../../api/schemas';
-import { occurrenceKey, resolveEffectMapping, type EventEffectMapping } from './eventEffectMapping';
+import {
+  occurrenceKey,
+  resolveEffectMapping,
+  type EventEffectMapping,
+  type EffectPlacement,
+} from './eventEffectMapping';
 
 /** Minimal texture handle contract (AssetManager.AssetHandle is a structural match). */
 export interface EffectAssetHandle {
@@ -72,12 +77,22 @@ const EFFECT_ANCHOR_X = 0.5;
 const EFFECT_ANCHOR_Y = 0.5;
 const EFFECT_THICKNESS_PX = 22;
 const EFFECT_MIN_LENGTH_PX = 8;
+// Incident alert (target-node) placement: the 512×512 radial alert is centered on the
+// affected node, rendered at a fixed readable board size, raised slightly so it reads as
+// sitting over the building. No rotation (radial, non-directional). Single source of truth.
+const INCIDENT_SIZE_PX = 96;
+const INCIDENT_Y_OFFSET_PX = -6;
 
 type Phase = 'PENDING' | 'ACTIVE';
 
 interface EffectInstance {
   readonly key: string;
   phase: Phase;
+  readonly placement: EffectPlacement;
+  /** Edge source node (source-to-target only); null for target-node placement. */
+  readonly source: string | null;
+  /** The node the effect is placed on/at (edge target, or the single alert node). */
+  readonly target: string;
   readonly expiresAtTick: number;
   readonly generation: number;
   handle: EffectAssetHandle | null;
@@ -97,6 +112,16 @@ function applyEdgeTransform(sprite: EffectSprite, source: Point, target: Point):
   sprite.height = EFFECT_THICKNESS_PX;
   sprite.position.set((source.x + target.x) / 2, (source.y + target.y) / 2);
   sprite.rotation = Math.atan2(dy, dx); // source → target direction
+}
+
+/** Node-centered transform for a target-node effect (incident alert). Deterministic:
+ * fixed square size, centered anchor, fixed vertical offset, no rotation. */
+function applyNodeTransform(sprite: EffectSprite, at: Point): void {
+  sprite.anchor.set(EFFECT_ANCHOR_X, EFFECT_ANCHOR_Y);
+  sprite.width = INCIDENT_SIZE_PX;
+  sprite.height = INCIDENT_SIZE_PX;
+  sprite.rotation = 0;
+  sprite.position.set(at.x, at.y + INCIDENT_Y_OFFSET_PX);
 }
 
 export class EventDerivedEffectController {
@@ -128,10 +153,29 @@ export class EventDerivedEffectController {
 
     if (!Number.isInteger(env.tick)) return;
     const payload = env.payload ?? {};
-    // §5: use the event's explicit source/target — NEVER infer from topology.
-    const source = readNodeId(payload['source_node_id']);
-    const target = readNodeId(payload['target_node_id']);
-    if (source === null || target === null) return; // malformed payload → no effect
+
+    // Resolve occurrence identity + placement nodes per the mapping's strategy. §5: read
+    // the event's explicit fields — NEVER infer endpoints from topology.
+    let source: string | null;
+    let target: string;
+    let key: string;
+    if (mapping.placement === 'source-to-target') {
+      const s = readNodeId(payload['source_node_id']);
+      const t = readNodeId(payload['target_node_id']);
+      if (s === null || t === null) return; // malformed payload → no effect
+      source = s;
+      target = t;
+      key = occurrenceKey(env.type, env.tick, s, t);
+    } else {
+      // target-node: the affected node is the envelope target; the incident type
+      // discriminates identity so distinct incidents on the same node/tick stay separate.
+      const t = readNodeId(env.target) ?? readNodeId(payload['target_node_id']);
+      const kind = readNodeId(payload['incident']);
+      if (t === null || kind === null) return; // malformed payload → no effect
+      source = null;
+      target = t;
+      key = occurrenceKey(env.type, env.tick, t, kind);
+    }
 
     // Keep the clock at least at this event's tick (events may lead polling).
     if (env.tick > this.currentTick) this.currentTick = env.tick;
@@ -139,32 +183,29 @@ export class EventDerivedEffectController {
     const expiresAtTick = env.tick + mapping.durationTicks;
     if (this.currentTick >= expiresAtTick) return; // late / already-expired event
 
-    const key = occurrenceKey(env.type, env.tick, source, target);
     if (this.registry.has(key)) return; // dedup: already PENDING or ACTIVE
 
-    // Resolve placement BEFORE acquiring; a node we cannot place → skip (no
+    // Resolve placement BEFORE acquiring; any node we must place but cannot → skip (no
     // arbitrary board-center spawn).
-    if (this.deps.positionOf(source) === undefined) return;
+    if (source !== null && this.deps.positionOf(source) === undefined) return;
     if (this.deps.positionOf(target) === undefined) return;
 
     const entry: EffectInstance = {
       key,
       phase: 'PENDING',
+      placement: mapping.placement,
+      source,
+      target,
       expiresAtTick,
       generation: this.generation,
       handle: null,
       sprite: null,
     };
     this.registry.set(key, entry);
-    void this.acquireAndAttach(entry, mapping, source, target);
+    void this.acquireAndAttach(entry, mapping);
   }
 
-  private async acquireAndAttach(
-    entry: EffectInstance,
-    mapping: EventEffectMapping,
-    source: string,
-    target: string,
-  ): Promise<void> {
+  private async acquireAndAttach(entry: EffectInstance, mapping: EventEffectMapping): Promise<void> {
     let handle: EffectAssetHandle;
     try {
       handle = await this.deps.assetManager.acquire(mapping.assetId);
@@ -184,17 +225,24 @@ export class EventDerivedEffectController {
       entry.phase !== 'PENDING' ||
       this.currentTick >= entry.expiresAtTick;
 
-    const sourcePos = this.deps.positionOf(source);
-    const targetPos = this.deps.positionOf(target);
+    const targetPos = this.deps.positionOf(entry.target);
+    const sourcePos = entry.source !== null ? this.deps.positionOf(entry.source) : undefined;
+    const missingPos = targetPos === undefined || (entry.source !== null && sourcePos === undefined);
 
-    if (stale || sourcePos === undefined || targetPos === undefined || handle.texture === null) {
+    if (stale || missingPos || handle.texture === null) {
       handle.release();
       if (this.registry.get(entry.key) === entry) this.registry.delete(entry.key);
       return;
     }
 
     const sprite = this.deps.createSprite(handle.texture);
-    applyEdgeTransform(sprite, sourcePos, targetPos);
+    // targetPos is narrowed to Point by the missingPos guard above; for the edge case
+    // sourcePos is defined too (source !== null ⇒ missingPos caught an undefined position).
+    if (entry.placement === 'source-to-target') {
+      applyEdgeTransform(sprite, sourcePos as Point, targetPos);
+    } else {
+      applyNodeTransform(sprite, targetPos);
+    }
     this.deps.layer.addChild(sprite);
     entry.handle = handle;
     entry.sprite = sprite;

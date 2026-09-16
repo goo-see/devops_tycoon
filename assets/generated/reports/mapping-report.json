@@ -37,12 +37,21 @@
       "runtime_source": "assets/source/building/load-balancer.png"
     },
     {
+      "asset_id": "effect.incident-alert.primary",
+      "asset_version": "1",
+      "exclusion_reason_code": null,
+      "included": true,
+      "runtime_checksum": "c5a1a19ce0aeab1c8a4db3710f311a6f08cdc75adbaad9971ad0b96df7cf6dcd",
+      "runtime_manifest_index": 4,
+      "runtime_source": "assets/source/effect/incident-alert.png"
+    },
+    {
       "asset_id": "effect.network-flow.primary",
       "asset_version": "1",
       "exclusion_reason_code": null,
       "included": true,
       "runtime_checksum": "d4c2dd4e7873479cc6ceff00394c28c7149561d468bb0f56d65b257b122b56e9",
-      "runtime_manifest_index": 4,
+      "runtime_manifest_index": 5,
       "runtime_source": "assets/source/effect/network-flow.png"
     }
   ]
