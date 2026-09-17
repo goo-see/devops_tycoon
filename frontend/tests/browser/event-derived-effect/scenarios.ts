@@ -21,6 +21,7 @@ export interface Check { label: string; ok: boolean; got: unknown }
 export interface ScenarioResult { name: string; ok: boolean; checks: Check[] }
 
 const EFFECT_ID = 'effect.network-flow.primary';
+const INCIDENT_ID = 'effect.incident-alert.primary';
 
 function result(name: string, checks: Check[]): ScenarioResult {
   return { name, ok: checks.every((c) => c.ok), checks };
@@ -102,6 +103,21 @@ function edgePositions(): Map<string, { x: number; y: number }> {
     ['lb-1', { x: 40, y: 120 }],
     ['app-1', { x: 360, y: 120 }],
   ]);
+}
+
+let incidentCursor = 1000;
+function incident(tick: number, target: string, kind: string): EventEnvelope {
+  incidentCursor += 1;
+  return {
+    event_id: `i-${incidentCursor}`,
+    cursor: incidentCursor,
+    session_id: 's',
+    session_revision: 1,
+    tick,
+    type: 'INCIDENT_OPENED',
+    target,
+    payload: { incident: kind, phase: 'WARNING', metric: 0 },
+  };
 }
 
 function glLost(app: Application): boolean {
@@ -292,6 +308,149 @@ async function scCleanup(): Promise<ScenarioResult> {
   }
 }
 
+/** 7. Incident #006: INCIDENT_OPENED → incident-alert PRIMARY, node-centered, visible. */
+async function scIncidentSpawn(): Promise<ScenarioResult> {
+  const m = newManager();
+  const app = await makeApp(240, 240);
+  try {
+    const probe = await m.acquire(INCIDENT_ID);
+    const primary = probe.fallback === false && m.lastTierOf(INCIDENT_ID) === 'primary';
+    probe.release();
+
+    const positions = new Map<string, { x: number; y: number }>([['app-1', { x: 120, y: 120 }]]);
+    const { controller, layer } = wire(m, positions);
+    app.stage.addChild(layer);
+    controller.advanceTo(10);
+    controller.handleEvent(incident(10, 'app-1', 'APP_CPU_OVERLOAD'));
+    await waitFor(() => controller.activeCount === 1);
+    app.render();
+    const pixels = nonEmptyPixels(app, layer);
+    const checks: Check[] = [
+      { label: 'PRIMARY (not fallback)', ok: primary, got: m.lastTierOf(INCIDENT_ID) },
+      { label: 'one active incident alert', ok: controller.activeCount === 1, got: controller.activeCount },
+      {
+        label: 'occurrence keyed by incident type',
+        ok: controller.hasOccurrence('incident-opened:10:app-1:APP_CPU_OVERLOAD'),
+        got: controller.hasOccurrence('incident-opened:10:app-1:APP_CPU_OVERLOAD'),
+      },
+      { label: 'node-centered frame non-empty', ok: pixels > 0, got: pixels },
+      { label: 'no context loss', ok: !glLost(app), got: glLost(app) },
+    ];
+    controller.dispose();
+    return result('incident_spawn_render_primary', checks);
+  } finally {
+    app.destroy(true, { children: true });
+    await m.disposeAll();
+  }
+}
+
+/** 8. Incident expiry by simulation tick (event.tick + 6). */
+async function scIncidentExpiry(): Promise<ScenarioResult> {
+  const m = newManager();
+  const app = await makeApp(240, 240);
+  try {
+    const positions = new Map<string, { x: number; y: number }>([['app-1', { x: 120, y: 120 }]]);
+    const { controller, layer } = wire(m, positions);
+    app.stage.addChild(layer);
+    controller.advanceTo(10);
+    controller.handleEvent(incident(10, 'app-1', 'APP_CPU_OVERLOAD')); // expires at 16
+    await waitFor(() => controller.activeCount === 1);
+    app.render();
+    const before = nonEmptyPixels(app, layer);
+    controller.advanceTo(16);
+    app.render();
+    const after = nonEmptyPixels(app, layer);
+    controller.dispose();
+    return result('incident_expiry_removes_effect', [
+      { label: 'visible before expiry', ok: before > 0, got: before },
+      { label: 'gone after expiresAtTick', ok: after === 0, got: after },
+    ]);
+  } finally {
+    app.destroy(true, { children: true });
+    await m.disposeAll();
+  }
+}
+
+/** 9. §49 coexistence: Network Flow + Incident Alert simultaneously — both visible,
+ * DIFFERENT TextureSources, independent refcounts + independent lifetime. */
+async function scCoexistence(): Promise<ScenarioResult> {
+  const m = newManager();
+  const app = await makeApp(400, 240);
+  try {
+    // Distinct production TextureSources for the two effect assets.
+    const netH = await m.acquire(EFFECT_ID);
+    const incH = await m.acquire(INCIDENT_ID);
+    const distinctTexture = netH.texture !== incH.texture && netH.texture !== null && incH.texture !== null;
+    netH.release();
+    incH.release();
+
+    const positions = new Map<string, { x: number; y: number }>([
+      ['lb-1', { x: 40, y: 120 }],
+      ['app-1', { x: 360, y: 120 }],
+    ]);
+    const { controller, layer } = wire(m, positions);
+    app.stage.addChild(layer);
+    controller.advanceTo(10);
+    controller.handleEvent(routed(10, 'lb-1', 'app-1')); // network flow, expires 16
+    controller.handleEvent(incident(12, 'app-1', 'APP_CPU_OVERLOAD')); // incident, expires 18
+    await waitFor(() => controller.activeCount === 2);
+    app.render();
+    const bothPixels = nonEmptyPixels(app, layer);
+    const netRef = m.refCountOf(EFFECT_ID);
+    const incRef = m.refCountOf(INCIDENT_ID);
+    // Independent lifetime: at tick 16 the network flow expires, the incident (exp 18) stays.
+    controller.advanceTo(16);
+    const afterNet = controller.activeCount;
+    controller.advanceTo(18);
+    const afterBoth = controller.activeCount;
+    const checks: Check[] = [
+      { label: 'both effects active', ok: bothPixels > 0, got: bothPixels },
+      { label: 'network-flow refCount 1', ok: netRef === 1, got: netRef },
+      { label: 'incident refCount 1 (independent)', ok: incRef === 1, got: incRef },
+      { label: 'DIFFERENT TextureSources', ok: distinctTexture, got: distinctTexture },
+      { label: 'network flow expired at 16, incident survives', ok: afterNet === 1, got: afterNet },
+      { label: 'incident expired at 18', ok: afterBoth === 0, got: afterBoth },
+      { label: 'no context loss', ok: !glLost(app), got: glLost(app) },
+    ];
+    controller.dispose();
+    return result('network_flow_incident_coexistence', checks);
+  } finally {
+    app.destroy(true, { children: true });
+    await m.disposeAll();
+  }
+}
+
+/** 10. Multiple simultaneous incidents (1/4/8) share ONE incident TextureSource
+ * (RUNTIME_SANITY — not a capacity claim). */
+async function scMultiIncident(): Promise<ScenarioResult> {
+  const m = newManager();
+  const app = await makeApp(256, 320);
+  try {
+    const positions = new Map<string, { x: number; y: number }>();
+    for (let i = 1; i <= 8; i++) positions.set(`app-${i}`, { x: 40 + (i % 4) * 50, y: 40 + Math.floor(i / 4) * 120 });
+    const { controller, layer } = wire(m, positions);
+    app.stage.addChild(layer);
+    controller.advanceTo(10);
+    for (let i = 1; i <= 8; i++) controller.handleEvent(incident(10, `app-${i}`, 'APP_CPU_OVERLOAD'));
+    await waitFor(() => controller.activeCount === 8);
+    app.render();
+    const pixels = nonEmptyPixels(app, layer);
+    const refCount = m.refCountOf(INCIDENT_ID);
+    const checks: Check[] = [
+      { label: '8 active incident alerts', ok: controller.activeCount === 8, got: controller.activeCount },
+      { label: 'ONE shared incident texture (refCount 8)', ok: refCount === 8, got: refCount },
+      { label: '8 instances render non-empty', ok: pixels > 0, got: pixels },
+      { label: 'no context loss', ok: !glLost(app), got: glLost(app) },
+    ];
+    controller.dispose();
+    checks.push({ label: 'refCount 0 after dispose', ok: m.refCountOf(INCIDENT_ID) === 0, got: m.refCountOf(INCIDENT_ID) });
+    return result('multi_incident_shared_texture', checks);
+  } finally {
+    app.destroy(true, { children: true });
+    await m.disposeAll();
+  }
+}
+
 export async function runEventDerivedScenarios(): Promise<ScenarioResult[]> {
   return [
     await scSpawnRender(),
@@ -300,5 +459,9 @@ export async function runEventDerivedScenarios(): Promise<ScenarioResult[]> {
     await scSpeedInvariance(),
     await scMultiShared(),
     await scCleanup(),
+    await scIncidentSpawn(),
+    await scIncidentExpiry(),
+    await scCoexistence(),
+    await scMultiIncident(),
   ];
 }

@@ -1,1 +1,1 @@
-["building.app-server.primary", "building.database.primary", "building.cache.primary", "building.load-balancer.primary", "effect.network-flow.primary"]
+["building.app-server.primary", "building.database.primary", "building.cache.primary", "building.load-balancer.primary", "effect.network-flow.primary", "effect.incident-alert.primary"]

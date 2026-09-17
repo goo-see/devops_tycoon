@@ -394,3 +394,157 @@ describe('EventDerivedEffectController', () => {
     expect(await run()).toEqual(await run());
   });
 });
+
+// -------------------------------------------------------------------------- //
+// Candidate #006 — INCIDENT_OPENED → effect.incident-alert.primary (TARGET_NODE)
+// -------------------------------------------------------------------------- //
+
+function incidentEvent(
+  tick: number,
+  target: string,
+  incident: string,
+  overrides: Partial<EventEnvelope> = {},
+): EventEnvelope {
+  cursorSeq += 1;
+  return {
+    event_id: `evt-${cursorSeq}`,
+    cursor: cursorSeq,
+    session_id: 'sess-1',
+    session_revision: 1,
+    tick,
+    type: 'INCIDENT_OPENED',
+    target,
+    payload: { incident, phase: 'WARNING', metric: 0, event_id: 'EVT-X' },
+    ...overrides,
+  };
+}
+
+describe('EventDerivedEffectController — INCIDENT_OPENED (target-node)', () => {
+  beforeEach(() => {
+    cursorSeq = 0;
+  });
+
+  it('spawns the incident-alert effect for INCIDENT_OPENED (acquire incident asset, ACTIVE)', async () => {
+    const h = harness();
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD'));
+    await flush();
+    expect(h.acquire).toHaveBeenCalledTimes(1);
+    expect(h.acquire).toHaveBeenCalledWith('effect.incident-alert.primary');
+    expect(h.controller.activeCount).toBe(1);
+    expect(h.layer.children).toHaveLength(1);
+  });
+
+  it('places node-centered: anchored at the target node, square, no rotation', async () => {
+    const h = harness();
+    h.positions.set('app-1', { x: 100, y: 40 });
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD'));
+    await flush();
+    const sp = h.sprites[0]!;
+    expect(sp.rotation).toBe(0); // radial, non-directional
+    expect(sp.width).toBe(sp.height); // square
+    expect(sp.x).toBe(100); // centered on the node x
+    expect(sp.y).toBe(40 - 6); // fixed vertical offset above the node
+    expect((sp.anchor.set as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(0.5, 0.5);
+  });
+
+  it('keys identity by tick+target+incidentType (deterministic, no UUID)', async () => {
+    const h = harness();
+    h.controller.handleEvent(incidentEvent(88, 'app-1', 'APP_CPU_OVERLOAD'));
+    await flush();
+    expect(
+      h.controller.hasOccurrence(occurrenceKey('INCIDENT_OPENED', 88, 'app-1', 'APP_CPU_OVERLOAD')),
+    ).toBe(true);
+  });
+
+  it('dedups the SAME incident occurrence (replay) — one effect, one acquire', async () => {
+    const h = harness();
+    const e = incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD');
+    h.controller.handleEvent(e);
+    h.controller.handleEvent({ ...e, event_id: 'dup', cursor: 999 });
+    await flush();
+    expect(h.acquire).toHaveBeenCalledTimes(1);
+    expect(h.controller.activeCount).toBe(1);
+    expect(h.layer.children).toHaveLength(1);
+  });
+
+  it('keeps DIFFERENT incident types on the same node+tick independent (not collapsed)', async () => {
+    const h = harness();
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD'));
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_MEM_SATURATION'));
+    await flush();
+    expect(h.controller.activeCount).toBe(2);
+    expect(h.layer.children).toHaveLength(2);
+  });
+
+  it('does NOT map INCIDENT_PHASE_CHANGED / INCIDENT_RESOLVED (no alert)', async () => {
+    const h = harness();
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD', { type: 'INCIDENT_PHASE_CHANGED' }));
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD', { type: 'INCIDENT_RESOLVED' }));
+    await flush();
+    expect(h.acquire).not.toHaveBeenCalled();
+    expect(h.controller.size).toBe(0);
+  });
+
+  it('skips malformed incident payloads (missing target or incident type)', async () => {
+    const h = harness();
+    // missing target (env.target null, no payload target_node_id)
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD', { target: null }));
+    // missing incident kind
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD', { payload: { phase: 'WARNING' } }));
+    // unknown target position
+    h.controller.handleEvent(incidentEvent(10, 'ghost-node', 'APP_CPU_OVERLOAD'));
+    await flush();
+    expect(h.acquire).not.toHaveBeenCalled();
+    expect(h.controller.size).toBe(0);
+    expect(h.layer.children).toHaveLength(0);
+  });
+
+  it('skips a late incident event (currentTick >= tick + durationTicks)', async () => {
+    const h = harness();
+    h.controller.advanceTo(100);
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD'));
+    await flush();
+    expect(h.acquire).not.toHaveBeenCalled();
+    expect(h.controller.size).toBe(0);
+  });
+
+  it('expires by simulation tick (event.tick + 6)', async () => {
+    const h = harness();
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD'));
+    await flush();
+    expect(h.controller.activeCount).toBe(1);
+    h.controller.advanceTo(15); // < 16, still active
+    expect(h.controller.activeCount).toBe(1);
+    h.controller.advanceTo(16); // == tick + 6 → expire
+    expect(h.controller.activeCount).toBe(0);
+    expect(h.layer.children).toHaveLength(0);
+    expect(h.sprites[0]!.destroyed).toBe(true);
+    expect(h.sprites[0]!.destroyOpts).toEqual({ texture: false, textureSource: false, children: true });
+  });
+
+  it('releases the pending handle if the controller is disposed mid-acquire (no attach)', async () => {
+    const d = deferred<EffectAssetHandle>();
+    const h = harness({ acquire: () => d.promise });
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD'));
+    h.controller.dispose();
+    const handle = makeHandle();
+    d.resolve(handle);
+    await flush();
+    expect(handle.released).toBe(true);
+    expect(h.layer.children).toHaveLength(0);
+  });
+
+  it('coexists with a network-flow effect: both active, independent, distinct assets', async () => {
+    const h = harness();
+    h.controller.handleEvent(routedEvent(10, 'lb-1', 'app-1'));
+    h.controller.handleEvent(incidentEvent(10, 'app-1', 'APP_CPU_OVERLOAD'));
+    await flush();
+    expect(h.controller.activeCount).toBe(2);
+    expect(h.layer.children).toHaveLength(2);
+    const assets = h.acquire.mock.calls.map((c) => c[0]).sort();
+    expect(assets).toEqual(['effect.incident-alert.primary', 'effect.network-flow.primary']);
+    // independent lifetime: expiring one leaves the other
+    h.controller.advanceTo(16);
+    expect(h.controller.activeCount).toBe(0); // both had tick 10 → both expire at 16
+  });
+});

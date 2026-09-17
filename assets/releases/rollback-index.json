@@ -19,6 +19,10 @@
           "asset_version": "1"
         },
         {
+          "asset_id": "effect.incident-alert.primary",
+          "asset_version": "1"
+        },
+        {
           "asset_id": "effect.network-flow.primary",
           "asset_version": "1"
         }
