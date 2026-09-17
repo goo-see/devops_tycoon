@@ -10,7 +10,7 @@ interface ResultsPayload {
   allOk: boolean;
 }
 
-test('event-derived effect: REQUEST_ROUTED → network-flow spawn / expiry / pause / speed / shared-texture in real WebGL2', async ({
+test('event-derived effect: REQUEST_ROUTED → network-flow + INCIDENT_OPENED → incident-alert (spawn / expiry / pause / speed / shared-texture / coexistence) in real WebGL2', async ({
   page,
 }) => {
   const pageErrors: string[] = [];
@@ -43,6 +43,10 @@ test('event-derived effect: REQUEST_ROUTED → network-flow spawn / expiry / pau
     'speed_invariant_lifetime',
     'multi_instance_shared_texture',
     'cleanup_clean',
+    'incident_spawn_render_primary',
+    'incident_expiry_removes_effect',
+    'network_flow_incident_coexistence',
+    'multi_incident_shared_texture',
   ]);
   expect(results.errors, 'no in-page errors').toEqual([]);
   expect(pageErrors, 'no page/console errors').toEqual([]);

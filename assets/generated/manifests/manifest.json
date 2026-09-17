@@ -69,6 +69,15 @@
       "sourceType": "image"
     },
     {
+      "assetId": "effect.incident-alert.primary",
+      "assetVersion": "1",
+      "bundleId": "critical-core",
+      "category": "effect",
+      "checksum": "c5a1a19ce0aeab1c8a4db3710f311a6f08cdc75adbaad9971ad0b96df7cf6dcd",
+      "source": "assets/source/effect/incident-alert.png",
+      "sourceType": "image"
+    },
+    {
       "assetId": "effect.network-flow.primary",
       "assetVersion": "1",
       "bundleId": "critical-core",

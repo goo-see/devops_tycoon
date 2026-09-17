@@ -143,6 +143,11 @@ export const PRODUCTION_EFFECT_ASSETS: Record<string, { source: string; checksum
     source: '/assets/effect/network-flow.png',
     checksum: 'd4c2dd4e7873479cc6ceff00394c28c7149561d468bb0f56d65b257b122b56e9',
   },
+  // #006 Incident Alert Effect — INCIDENT_OPENED → node-centered alert (POLICY-C-FU-002 runtime).
+  'effect.incident-alert.primary': {
+    source: '/assets/effect/incident-alert.png',
+    checksum: 'c5a1a19ce0aeab1c8a4db3710f311a6f08cdc75adbaad9971ad0b96df7cf6dcd',
+  },
 };
 
 /**
