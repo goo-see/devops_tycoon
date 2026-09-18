@@ -1,0 +1,77 @@
+# EVENT_DERIVED_LIVE_E2E_AUTOMATION — durable real-stack regression for production
+# effects (POLICY-C-FU-002). Boots the REAL backend (in-memory storage; manual tick API)
+# + the REAL app via Vite, then drives Playwright specs that observe genuine
+# simulation-originated REQUEST_ROUTED and INCIDENT_OPENED events → rendered effects.
+#
+# NON-REQUIRED check: this job is intentionally NOT wired into branch protection. The only
+# required merge check remains `asset-production-gate`. Making this required is a separate
+# DevCTO/Ops action AFTER stability is established across repeated runs. The renderer here
+# is the CI (software/SwiftShader) path — reported as such, never conflated with the local
+# Apple-M4-Max/Metal hardware evidence.
+name: event-derived-live-e2e
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: event-derived-live-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  event-derived-live-e2e:
+    name: event-derived-live-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend toolchain (fastapi + uvicorn)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run Event-Derived LIVE E2E (real stack, real events)
+        working-directory: frontend
+        env:
+          # Use the CI interpreter (setup-python) that has the backend deps installed.
+          E2E_PYTHON: python
+        run: pnpm test:browser:event-derived-live
+
+      - name: Upload failure artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: event-derived-live-e2e-artifacts
+          path: |
+            frontend/test-results/**
+          if-no-files-found: ignore
+          retention-days: 7

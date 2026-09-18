@@ -25,10 +25,13 @@ module.exports = {
     'playwright.production-image.config.ts',
     'playwright.effect-preview.config.ts',
     'playwright.event-derived.config.ts',
+    'playwright.event-derived-live.config.ts',
     'tests/browser/asset-runtime/vite.config.ts',
     'tests/browser/production-image/vite.config.ts',
     'tests/browser/effect-preview/vite.config.ts',
     'tests/browser/event-derived-effect/vite.config.ts',
+    'tests/browser/event-derived-live/vite.config.ts',
+    'tests/browser/event-derived-live/launch.mjs',
   ],
   rules: {
     'react-hooks/rules-of-hooks': 'error',
