@@ -17,7 +17,7 @@
  */
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdirSync, createWriteStream } from 'node:fs';
+import { existsSync, mkdirSync, createWriteStream, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -61,10 +61,19 @@ async function waitReady(url, label, timeoutMs = 60_000) {
 }
 
 const children = [];
-function start(cmd, args, opts) {
+function start(name, cmd, args, opts) {
   const child = spawn(cmd, args, { detached: true, ...opts });
   children.push(child);
+  child.on('error', (e) => console.error(`[launch] ${name} spawn error: ${e.message}`));
+  child.on('exit', (code, sig) => {
+    if (!cleaned && code !== 0) console.error(`[launch] ${name} exited early: code=${code} signal=${sig}`);
+  });
   return child;
+}
+function tailFile(path, n = 25) {
+  try {
+    return readFileSync(path, 'utf8').split('\n').slice(-n).join('\n');
+  } catch { return '(no log captured)'; }
 }
 let cleaned = false;
 function cleanup() {
@@ -97,20 +106,30 @@ async function main() {
   const py = pythonBin();
   console.log(`[launch] python=${py}  backend=${backendUrl}  frontend=${frontendUrl}`);
 
-  const backend = start(py, ['-m', 'uvicorn', 'backend.app:create_app', '--factory', '--host', '127.0.0.1', '--port', String(bport)], {
+  const backendLogPath = resolve(logDir, 'backend.log');
+  const viteLogPath = resolve(logDir, 'vite.log');
+
+  const backend = start('backend', py, ['-m', 'uvicorn', 'backend.app:create_app', '--factory', '--host', '127.0.0.1', '--port', String(bport)], {
     cwd: repoRoot,
     env: { ...process.env, DEVOPS_TYCOON_ENABLE_MANUAL_TICK_API: 'true', DEVOPS_TYCOON_MAX_TICKS_PER_REQUEST: '100' },
   });
   backend.stdout.pipe(backendLog); backend.stderr.pipe(backendLog);
 
-  const vite = start('npx', ['vite', '--config', 'tests/browser/event-derived-live/vite.config.ts'], {
+  const vite = start('vite', 'npx', ['vite', '--config', 'tests/browser/event-derived-live/vite.config.ts'], {
     cwd: frontendDir,
     env: { ...process.env, E2E_BACKEND_URL: backendUrl, E2E_FRONTEND_PORT: String(fport) },
   });
   vite.stdout.pipe(viteLog); vite.stderr.pipe(viteLog);
 
-  await waitReady(`${backendUrl}/health/live`, 'backend');
-  await waitReady(`${frontendUrl}/`, 'frontend');
+  try {
+    await waitReady(`${backendUrl}/health/live`, 'backend');
+    await waitReady(`${frontendUrl}/`, 'frontend');
+  } catch (e) {
+    console.error(`[launch] ${e.message}`);
+    console.error(`[launch] --- backend.log tail ---\n${tailFile(backendLogPath)}`);
+    console.error(`[launch] --- vite.log tail ---\n${tailFile(viteLogPath)}`);
+    throw e;
+  }
   console.log('[launch] stack ready — running Playwright');
 
   const extra = process.argv.slice(2);
