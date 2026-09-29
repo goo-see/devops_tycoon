@@ -85,10 +85,12 @@ future scenario needs them, CI must provision them explicitly rather than silent
   bit-stable every run (network flow `changed=81 newCyan=19 postTTL=0`; incident
   `0 / 869 / 0`). Per-test wall time ≈ 3.8 s; full command (stack boot + 2 specs + teardown)
   ≈ 15–20 s. No orphan process or leaked port after 10 runs.
-- **CI: `event-derived-live-e2e`** workflow, **NON-REQUIRED** check (branch protection is
-  unchanged; the only required check remains `asset-production-gate`). CI run results are
-  recorded on the PR; making this required is a separate DevCTO/Ops action after stability
-  is confirmed across repeated CI executions.
+- **CI: `event-derived-live-e2e`** workflow (GitHub `ubuntu-latest`, Chromium software
+  renderer), **NON-REQUIRED** check (branch protection is unchanged; the only required
+  check remains `asset-production-gate`). **3 consecutive green CI executions** on PR #64
+  (≈ 1m0s–1m4s each) after fixing the backend-extra install; the pre-fix attempt correctly
+  failed fast with a diagnostic (missing `uvicorn` → backend readiness timeout with a log
+  tail). Making this check required is a separate DevCTO/Ops action.
 
 ## Product contract (unchanged)
 
