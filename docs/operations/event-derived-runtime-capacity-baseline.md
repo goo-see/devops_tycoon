@@ -135,10 +135,14 @@ heap used (MB, `JS_HEAP_USED_OBSERVED`); `tex` = unique production TextureSource
 | 64 | 59.9 | 16.7 | 17.4 | 0.99 | 0.1 | 10.1 | 1 | 64 | MEASURED_STABLE |
 | 128 | 59.9 | 16.7 | 17.6 | 1.00 | 0.1 | 10.2 | 1 | 128 | MEASURED_STABLE |
 
-`OVERLAP_RENDER_STRESS_OBSERVED`: at equal Sprite count, `incident_overlap` frame p95 and
-render-submit were indistinguishable from `incident_only_distributed` on this hardware
-(e.g. 128: overlap p95 17.6 ms vs distributed 17.4 ms; render p95 0.1 vs 0.2 ms) — no
-measurable overdraw cost at this scale on M4 Max. This is NOT an exact GPU overdraw count.
+`OVERLAP_RENDER_STRESS_OBSERVED`: at equal Sprite count, measured `incident_overlap` frame
+p95 and CPU render-submit were close to `incident_only_distributed` on this hardware (e.g.
+128: overlap p95 17.6 ms vs distributed 17.4 ms; CPU render-submit p95 0.1 vs 0.2 ms).
+Because frame cadence is vsync-capped and a valid GPU timer query was NOT_AVAILABLE, **the
+current methodology did not resolve a meaningful difference between distributed and
+overlapping Incident Alert rendering at 128 effects** — this is explicitly NOT a claim of
+`NO_OVERDRAW_COST` and NOT an exact GPU overdraw measurement. Resolving overdraw cost would
+require the proposed GPU-timing / uncapped-render follow-up.
 
 ## Spawn / cleanup bursts (§24/§25)
 
@@ -190,12 +194,18 @@ measurable overdraw cost at this scale on M4 Max. This is NOT an exact GPU overd
 ## Interpretation (facts only — §55)
 
 - On **Apple M4 Max / ANGLE Metal, 1280×720, DPR 1**, from 0 to 128 active effects in all
-  four scenarios (including overlap), **frame cadence remained at display refresh
-  (~60 fps / ~17.4 ms)**; frame p95 stayed within **0.97–1.00×** the zero-effect baseline.
-- CPU-side render-submit stayed ≤ **0.3 ms** and controller `advanceTo` cost was below
-  timer resolution (~0 ms) through 128.
+  four scenarios (including overlap), `DISPLAY_REFRESH_CADENCE_MAINTAINED_WITHIN_MEASURED_LADDER`:
+  **frame cadence remained at display refresh (~60 fps / ~17.4 ms)**; frame p95 stayed within
+  **0.97–1.00×** the zero-effect baseline. Because the cadence is vsync-capped, this is NOT a
+  claim of GPU headroom or that 128 is "comfortably" supported.
+- `CPU_RENDER_SUBMIT_TIME_OBSERVED` (CPU-side `renderer.render()` invocation, NOT GPU time,
+  NOT frame time, NOT total render cost) stayed ≤ **0.3 ms** through 128.
+  `CONTROLLER_UPDATE_TIME_OBSERVED: BELOW_TIMER_RESOLUTION` — `advanceTo` did not resolve as
+  a positive value at these counts (this is "unmeasurably small," NOT "zero cost" / "free").
 - **The runtime did not reach a degraded or unstable point within the measured ladder on
-  this hardware.** Therefore **no maximum is declared** — the sweep did not find one.
+  this hardware** (`NO_RUNTIME_INSTABILITY_OBSERVED_WITHIN_MEASURED_LADDER`). Therefore
+  **no maximum is declared** (`PRODUCTION_EFFECT_CAPACITY_LIMIT: NOT_DEFINED`) — the sweep did
+  not find one; absence of an observed knee is not evidence that 128 is a supported limit.
 - **Caveat (important):** frame intervals are **vsync-capped**, so frame p95 cannot reveal
   spare headroom below saturation. The sensitive sub-saturation signals here are
   render-submit CPU time and controller cost, both sub-millisecond through 128. Extending
