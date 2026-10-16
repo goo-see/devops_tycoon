@@ -32,8 +32,15 @@ async function pollUntil(fn: () => Promise<number>, ok: (n: number) => boolean, 
 
 test('LIVE Path B: real NO_HEALTHY_SERVER incident renders the node-centered alert then expires by tick TTL', async ({ page }) => {
   const errs: string[] = [];
-  page.on('pageerror', (e) => errs.push(`pageerror:${e.message}`));
+  // DIAGNOSTIC (temporary, EVENT_DERIVED_LIVE_E2E_INCIDENT_CI_FLAKE triage): capture the
+  // full stack into the assertion string + stdout so the exact undefined.push callsite is
+  // visible in the CI log of a reproduction. Reverted once root-caused.
+  page.on('pageerror', (e) => { errs.push(`pageerror:${e.message}\nSTACK:${e.stack}`); console.log('PAGEERROR_STACK >>>', e.stack); });
   page.on('console', (m) => { if (m.type() === 'error') errs.push(`console:${m.text()}`); });
+  if (process.env.CAP_CPU_THROTTLE) {
+    const client = await page.context().newCDPSession(page);
+    await client.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.CAP_CPU_THROTTLE) });
+  }
   const opened: DomainEvent[] = collectDomainEvents(page, 'INCIDENT_OPENED');
 
   const sid = await createSession(page.request, 80);
