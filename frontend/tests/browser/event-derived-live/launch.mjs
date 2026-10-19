@@ -132,7 +132,9 @@ async function main() {
   }
   console.log('[launch] stack ready — running Playwright');
 
-  const extra = process.argv.slice(2);
+  // Forward extra args to playwright; drop a stray `--` that pnpm passes through verbatim
+  // (otherwise playwright treats it as a positional filter → "No tests found").
+  const extra = process.argv.slice(2).filter((a) => a !== '--');
   const pw = spawn('npx', ['playwright', 'test', '-c', 'playwright.event-derived-live.config.ts', ...extra], {
     cwd: frontendDir,
     env: { ...process.env, E2E_BASE_URL: frontendUrl, E2E_API_URL: backendUrl },

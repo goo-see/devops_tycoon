@@ -108,3 +108,53 @@ verify-generated PASS, C01–C26 26/26, asset-production-gate SUCCESS.
   two required single-path live tests robust (§22).
 - Does NOT establish effect performance/sprite/overdraw capacity (next track).
 - `INCIDENT_ALERT_PNG_SIZE_OPTIMIZATION` remains `PROPOSED / NON_BLOCKING` (not touched).
+
+## Incident CI-flake triage (EVENT_DERIVED_LIVE_E2E_INCIDENT_CI_FLAKE)
+
+**State: `ROOT_CAUSE_CONFIRMED_PRODUCT_RUNTIME` (Pixi dependency defect, software-renderer-exposed).**
+This is **not** a harness/test race and **not** an event-derived-effect bug — so it is **not**
+"fixed" by the harness, per the triage contract (do not mask).
+
+**Symptom:** the non-required `event-derived-live-e2e` CI job (ubuntu / SwiftShader software
+renderer) intermittently failed the incident path with
+`TypeError: Cannot read properties of undefined (reading 'push')` (first seen on PRs #68/#69,
+each green on rerun).
+
+**Reproduction (method):** not reproducible on Apple M4 Max / Metal (0 in 68 local CI-like
+runs: 30 plain swiftshader + 20 at 8× CPU throttle + 18 repeat-each at 12× throttle). It IS
+reproducible in the actual CI environment: a temporary diagnostic (capture `e.stack`; run
+`--repeat-each=12`) reproduced it **5×/24** and captured the stack.
+
+**Root cause (exact):** Pixi.js **8.19.0** `TexturePool.returnTexture`:
+```
+returnTexture(renderTexture) {
+  const key = this._poolKeyHash[renderTexture.uid];
+  this._texturePool[key].push(renderTexture);   // _texturePool[key] can be undefined → throws
+}
+```
+Call path: `CanvasTextSystem.returnTexture → decreaseReferenceCount → CanvasTextPipe._updateGpuText
+→ addRenderable → Text.collectRenderables` (during a render pass). The **`Text`** is the standard
+production **building label** (`BuildingView.ts` `new Text(...)`), not the debug overlay
+(`isDebugEnabled` = `DEV && VITE_PIXI_DEBUG==='1'`, unset here) and not the incident alert sprite.
+Under the software renderer's timing (and the incident scenario re-rendering labels via
+`setIncidents`), a text GPU render-texture is returned before/without its pool bucket being
+initialized, so the un-guarded `.push` throws. Not observed on hardware GPU (Metal), so it is a
+**CI-software-renderer-exposed Pixi library defect**, not a known user-facing production fault.
+
+**Classification:** `D/ENVIRONMENT_SPECIFIC_RACE` in a **dependency (Pixi)**, triggered by standard
+product Text rendering. Not `A` (harness), not `C` (instrumentation).
+
+**Fix ownership — separate track required (not done here):**
+`EVENT_DERIVED_PIXI_CANVASTEXT_POOL_FIX` — evaluate a **Pixi.js upgrade** (the upstream fix is a
+guard such as `this._texturePool[key] ??= []` / key-existence check in `returnTexture`) or, if no
+fixed release is available, a `patch-package` guard or a text-rendering change (e.g. `BitmapText`).
+That is a product/dependency change and must be its own PR with full rendering regression — per the
+triage contract, no product/dependency change was made in this infra track.
+
+**Incidental harness fix kept (unrelated to the flake):** `launch.mjs` now drops a stray `--`
+that pnpm forwards verbatim, so `pnpm test:browser:event-derived-live -- <args>` (e.g.
+`--repeat-each=N`) reaches Playwright instead of erroring `No tests found`.
+
+**CI policy:** `event-derived-live-e2e` stays **NON-REQUIRED** (branch protection still only
+`asset-production-gate`). No Playwright retry increase, no `pageerror` filtering, no arbitrary
+sleep, no event injection — the flake is left visible and non-required until the dependency fix.
