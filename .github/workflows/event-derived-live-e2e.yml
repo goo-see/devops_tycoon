@@ -66,10 +66,7 @@ jobs:
         env:
           # Use the CI interpreter (setup-python) that has the backend deps installed.
           E2E_PYTHON: python
-        # DIAGNOSTIC (temporary, incident-CI-flake triage): repeat-each raises the chance of
-        # catching the intermittent incident pageerror so its stack lands in this log.
-        # Reverted to `pnpm test:browser:event-derived-live` once root-caused.
-        run: pnpm test:browser:event-derived-live -- --repeat-each=12
+        run: pnpm test:browser:event-derived-live
 
       - name: Upload failure artifacts
         if: ${{ failure() }}
