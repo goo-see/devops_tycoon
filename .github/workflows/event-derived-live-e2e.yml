@@ -66,10 +66,7 @@ jobs:
         env:
           # Use the CI interpreter (setup-python) that has the backend deps installed.
           E2E_PYTHON: python
-        # TEMP FIX-VALIDATION (reverted before merge): repeat-each=12 applies the same
-        # software-renderer pressure that reproduced the pre-fix flake 5/24, to prove the
-        # pixi 8.21.0 upgrade resolves it (expect 0 undefined.push across repetitions).
-        run: pnpm test:browser:event-derived-live -- --repeat-each=12
+        run: pnpm test:browser:event-derived-live
 
       - name: Upload failure artifacts
         if: ${{ failure() }}
