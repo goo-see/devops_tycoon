@@ -158,3 +158,29 @@ that pnpm forwards verbatim, so `pnpm test:browser:event-derived-live -- <args>`
 **CI policy:** `event-derived-live-e2e` stays **NON-REQUIRED** (branch protection still only
 `asset-production-gate`). No Playwright retry increase, no `pageerror` filtering, no arbitrary
 sleep, no event injection — the flake is left visible and non-required until the dependency fix.
+
+### Fix applied — EVENT_DERIVED_PIXI_CANVASTEXT_POOL_FIX
+
+**State: `EVENT_DERIVED_LIVE_E2E_INCIDENT_CI_FLAKE = RESOLVED_PENDING_DEVCTO_APPROVAL`.**
+
+**Strategy chosen: minimal dependency upgrade** (priority #1). `pixi.js 8.19.0 → 8.21.0`
+(`^8.6.6` → `^8.21.0`, lockfile pinned 8.21.0). 8.21.0 is the **minimal** release containing
+the upstream fix (8.20.1 still has the bug): `TexturePool.returnTexture` now guards
+`if (key === void 0) { warn; return; }` and uses a Map-based bucket (`this._buckets.get(key)`)
+instead of the unguarded `this._texturePool[key].push(...)`. No patch-package / BitmapText
+migration needed. No product-code or event-derived semantics change
+(mappings / `durationTicks` / placement / AssetManager / production assets untouched).
+
+**Validation evidence:**
+- **Software renderer (CI, the reproduction environment):** with the same `--repeat-each=12`
+  pressure that reproduced the pre-fix flake **5/24**, post-fix = **3 consecutive CI runs,
+  24 passed / 0 `undefined.push` each (72 repetitions, 0 failures)**. The temporary
+  `--repeat-each` CI step was reverted; the committed workflow runs a single pass.
+- **Software renderer (local swiftshader):** incident path `--repeat-each=30`, 30 passed,
+  0 pageerror.
+- **Apple M4 Max / Metal regression:** `event-derived-live` 2/2, `event-derived` (10
+  scenarios), `asset-runtime`, `production-image`, `effect-preview`, capacity smoke
+  (0/32/128, texture sharing intact), and **visual-c 5/5** (incl. 54 building-label `Text`
+  — no missing/corrupt labels). lint / typecheck / vitest **271** / build clean.
+- **No masking:** no Playwright retry increase, no `pageerror` filtering, no sleeps, no event
+  injection; CI job stays **NON-REQUIRED** pending post-fix stability observation.
