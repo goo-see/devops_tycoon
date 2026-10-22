@@ -32,8 +32,10 @@ The project's own design already points at **visual bounding, not topology bound
 - **`POLICY-C-FU-003` is IMPLEMENTED** (`src/game/incidentModel.ts`): the persistent incident
   **status overlay** already dedupes by stable `(type,target)` key, sorts deterministically by
   `(phase-priority, type, target)` (never random), caps at `MAX_VISIBLE_INCIDENTS = 6`, and
-  reports `overflowCount`. This is precisely the Option-B/C discipline — already shipped for one
-  visual surface.
+  reports `overflowCount`. This is an **architectural precedent** for the Option-B/C discipline
+  (visual representation bounded while truth is retained) — **not** a direct implementation to
+  reuse: the status overlay is a different surface with a different lifecycle than an
+  event-derived effect (TTL, per-occurrence spawn), so the shape transfers, the code does not.
 - **`pixi-asset-pipeline.md`**: "Cull off-screen objects; **cap concurrent animations and
   particles**." — an explicit visual-concurrency-cap directive.
 - **`decisions-required.md` / `gameplay-visual-mapping.md`**: request/connection flow is
@@ -64,8 +66,13 @@ Simulation truth is authoritative and **immutable** by any visual policy: reques
 incident open/resolve, economy, score, health, and `REQUEST_ROUTED`/`INCIDENT_OPENED` emission
 are never altered, dropped, delayed, or fed back from rendering. Visual truth may be
 **coalesced/compressed** for readability and performance. `SIMULATION_FEEDBACK = FORBIDDEN`.
-Raw DomainEvents remain in the existing session/event stream (§24) — visual coalescing changes
-only what is *drawn*, never what is *recorded or simulated*.
+The simulation/event stream is authoritative and independent of rendering: visual
+coalescing/overflow changes only what is *drawn*, never what the simulation **computes or
+emits** — no DomainEvent is dropped, altered, reordered, or delayed because of a visual
+decision (§24). This makes **no** durable event-log claim: the in-sim `EventLog` is a bounded
+ring buffer (`max_size = 500`) and the backend event store is separate; the invariant is only
+that visual overflow never affects the event pipeline, not that every historical event is
+retained forever.
 
 ## Option A — `TOPOLOGY_BOUND_POLICY`
 
@@ -91,8 +98,9 @@ Components (§11): per-edge network coalescing, per-target incident coalescing, 
 concurrency bound, and deterministic prioritization on overflow.
 
 - **Network coalescing (§12/§13):** one active visual per edge; new `REQUEST_ROUTED` refreshes it
-  (intensity/state) instead of adding a Sprite. Preserves direction + edge identity; represents
-  occurrence volume as intensity; drops only *individual-tick* visual multiplicity. Removes the
+  (intensity/state) instead of adding a Sprite. Preserves direction + edge identity; **may**
+  encode occurrence volume via intensity/state (a candidate visual encoding — no formula is
+  fixed here); drops only *individual-tick* visual multiplicity. Removes the
   ~6× TTL amplification: `VISIBLE_NETWORK_FLOW ≤ active routed edges` (not `× 6`).
 - **Incident coalescing (§14):** recommend **one alert visual per `(type,target)`** (option 14-B)
   — it matches the event's own occurrence identity and the shipped POLICY-C-FU-003 overlay key;
@@ -135,7 +143,7 @@ A concrete composition (not "do both somehow"):
 | Testing complexity ↓ | LOW–MED | HIGH | HIGH |
 | Future scalability ↑ | LOW (couples sim↔renderer) | HIGH (decoupled) | HIGH |
 | Backward compatibility ↑ | LOW (rejects valid topologies/sessions) | HIGH | HIGH |
-| Debuggability ↑ | HIGH (fewer entities) | MED (visual≠1:1; raw events retained) | MED |
+| Debuggability ↑ | HIGH (fewer entities) | MED (visual≠1:1; event stream unaffected by visuals) | MED |
 | Failure containment ↑ | LOW (no renderer safety for allowed configs) | HIGH | **HIGH** |
 | Derive a performance target ↑ | MED (incident coeffs fuzzy) | HIGH | **HIGH** (global visible bound *is* the target) |
 
@@ -171,10 +179,13 @@ design's intended sandbox topology, directly extends an **already-shipped** proj
 gives an **absolute** renderer bound (which B-alone lacks and A achieves only by restricting
 gameplay), and produces a single, well-posed number to benchmark.
 
-**Rejected:** A (sole) — no gameplay basis for a hard topology limit; renderer-protection-only is
-disqualifying (§29); would reject valid sandbox play. B (sole) — would be acceptable *with* a
-global bound, but is subsumed by C, which additionally carries the soft design envelope the
-project already uses; naming it "B" would misrepresent the topology side.
+**Rejected as the *sole* architecture (neither is invalid — both remain viable components):**
+A (sole) — no gameplay basis for a hard topology limit; renderer-protection-only is disqualifying
+(§29); would reject valid sandbox play. A hard topology limit may still be introduced **later**
+for a genuine gameplay/design reason. B (sole) — would be acceptable *with* a global bound, but is
+subsumed by C, which additionally carries the soft design envelope the project already uses;
+naming it "B" would misrepresent the topology side. B's mechanisms (coalescing + global bound)
+are retained inside C.
 
 ## Unresolved numeric inputs (§30 — REQUIRES_GAME_DESIGN_INPUT)
 
@@ -191,7 +202,9 @@ budget → implementation.** Do not invert.
 
 - `EVENT_DERIVED_SATURATION_SWEEP = STILL_DEFERRED` → becomes `JUSTIFIED_AFTER_NUMERIC_ENVELOPE`
   once the global visible-effect bound value is chosen (that bound defines the exact range to
-  sweep, replacing the arbitrary 256/512/1024 problem).
+  sweep, replacing the arbitrary 256/512/1024 problem). Nuance (§32): a full sweep is **not**
+  guaranteed — if the chosen numeric target falls entirely inside the already-validated 0..128
+  range, a **targeted confirmation** at that target may suffice instead of a new sweep.
 - `EVENT_DERIVED_LIVE_E2E_REQUIRED_CHECK_DECISION = DEFERRED_PENDING_NATURAL_STABILITY_EVIDENCE`
   (§37) — 1 natural post-fix green run recorded (dev-push); do not manufacture more or use
   `--repeat-each` diagnostics as natural evidence.
