@@ -51,10 +51,14 @@ driver — not total nodes/edges, §10); `A/D/C/L` = app / database / cache / lo
 
 ### Finding — topology-independent, already determinable
 
-For **any** `E`, coalescing changes `6 × E → ≤ E`: a **6× reduction** of Network-Flow visual
-workload, because most of the current amplification comes from TTL retention of repeated same-edge
-occurrences, **not** from topology. This is the strongest single input to the eventual safety
-bound and holds regardless of the (still-TBD) intended `E`.
+For **any** `E`, coalescing changes `6 × E → ≤ E`: a **6× reduction of the Network-Flow
+*visible-instance count*** (Sprite/occurrence count), because most of the current amplification
+comes from TTL retention of repeated same-edge occurrences, **not** from topology. This is the
+strongest single input to the eventual safety bound and holds regardless of the (still-TBD)
+intended `E`. **Caveat (§8):** this is a *visible-instance* reduction only — it does **not** imply
+total rendering becomes 6× faster, GPU cost becomes one-sixth, or frame time improves 6× (frames
+were already vsync-capped with sub-millisecond submit in the capacity baseline). Its value is
+fewer visual instances to bound/coalesce and improved readability — not a measured GPU speedup.
 
 ### Illustrative only (NOT a product envelope — numbers are placeholders)
 
